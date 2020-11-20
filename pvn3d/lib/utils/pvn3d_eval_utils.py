@@ -19,6 +19,8 @@ config = Config(dataset_name='ycb')
 bs_utils = Basic_Utils(config)
 config_lm = Config(dataset_name="linemod")
 bs_utils_lm = Basic_Utils(config_lm)
+config_tless = Config(dataset_name="tless")
+bs_utils_tless = Basic_Utils(config_tless)
 cls_lst = config.ycb_cls_lst
 
 
@@ -219,6 +221,24 @@ def eval_metric_lm(cls_ids, pred_pose_lst, RTs, mask, label, obj_id):
 
     return (cls_add_dis, cls_adds_dis)
 
+def eval_metric_tless(cls_ids, pred_pose_lst, RTs, mask, label, obj_id):
+    n_cls = 31
+    cls_add_dis = [list() for i in range(n_cls)]
+    cls_adds_dis = [list() for i in range(n_cls)]
+
+    pred_RT = pred_pose_lst[0]
+    pred_RT = torch.from_numpy(pred_RT.astype(np.float32)).cuda()
+    gt_RT = RTs[0]
+    mesh_pts = bs_utils_tless.get_pointxyz_cuda(obj_id, ds_type="tless").clone()
+    add = bs_utils_tless.cal_add_cuda(pred_RT, gt_RT, mesh_pts)
+    adds = bs_utils_tless.cal_adds_cuda(pred_RT, gt_RT, mesh_pts)
+    cls_add_dis[obj_id].append(add.item())
+    cls_adds_dis[obj_id].append(adds.item())
+    cls_add_dis[0].append(add.item())
+    cls_adds_dis[0].append(adds.item())
+
+    return (cls_add_dis, cls_adds_dis)
+
 
 def eval_one_frame_pose_lm(
     item
@@ -235,16 +255,83 @@ def eval_one_frame_pose_lm(
     )
     return (cls_add_dis, cls_adds_dis)
 
+def eval_one_frame_pose_tless(
+    item
+):
+    pcld, mask, ctr_of, pred_kp_of, RTs, cls_ids, use_ctr, n_cls, \
+        min_cnt, use_ctr_clus_flter, label, epoch, ibs, obj_id = item
+    pred_pose_lst = cal_frame_poses_tless(
+        pcld, mask, ctr_of, pred_kp_of, use_ctr, n_cls, use_ctr_clus_flter,
+        obj_id
+    )
+
+    cls_add_dis, cls_adds_dis = eval_metric_tless(
+        cls_ids, pred_pose_lst, RTs, mask, label, obj_id
+    )
+    return (cls_add_dis, cls_adds_dis)
+
+def cal_frame_poses_tless(pcld, mask, ctr_of, pred_kp_of, use_ctr, n_cls, use_ctr_clus_flter, obj_id):
+    obj_id = int(obj_id)
+    n_kps, n_pts, _ = pred_kp_of.size()
+    pred_ctr = pcld - ctr_of[0]
+    pred_kp = pcld.view(1, n_pts, 3).repeat(n_kps, 1, 1) - pred_kp_of
+
+    radius = 0.08
+    if use_ctr:
+        cls_kps = torch.zeros(n_cls, n_kps+1, 3).cuda()
+    else:
+        ls_kps = torch.zeros(n_cls, n_kps, 3).cuda()
+
+    pred_pose_lst = []
+    cls_id = 1
+
+    cls_msk = mask == cls_id
+    if cls_msk.sum() < 1:
+        pred_pose_lst.append(np.identity(4)[:3,:])
+    else:
+        cls_voted_kps = pred_kp[:, cls_msk, :]
+        ms = MeanShiftTorch(bandwidth=radius)
+        ctr, ctr_labels = ms.fit(pred_ctr[cls_msk, :])
+        if ctr_labels.sum() < 1:
+            ctr_labels[0] = 1
+        if use_ctr:
+            cls_kps[cls_id, n_kps, :] = ctr
+
+        if use_ctr_clus_flter:
+            in_pred_kp = cls_voted_kps[:, ctr_labels, :]
+        else:
+            in_pred_kp = cls_voted_kps
+
+        # print("#### in file: pvn3d_eval_utils, func: cal_frame_poses_tless, enumerate in_pred_kp ####")
+        for ikp, kps3d in enumerate(in_pred_kp):
+            # print("i: {}, kps3d: {}".format(ikp, kps3d))
+            cls_kps[cls_id, ikp, :], _ = ms.fit(kps3d)
+
+        mesh_kps = bs_utils_tless.get_kps(obj_id, kp_type='farthest8', ds_type='tless')
+        if use_ctr:
+            mesh_ctr = bs_utils_tless.get_ctr(obj_id, ds_type="tless").reshape(1,3)
+            mesh_kps = np.concatenate((mesh_kps, mesh_ctr), axis=0)
+        mesh_kps = torch.from_numpy(mesh_kps.astype(np.float32)).cuda()
+        pred_RT = bs_utils_tless.best_fit_transform(mesh_kps.contiguous().cpu().numpy(), cls_kps[cls_id].squeeze().contiguous().cpu().numpy())
+        pred_pose_lst.append(pred_RT)
+    return pred_pose_lst
 
 class TorchEval():
 
-    def __init__(self):
-        n_cls = 22
-        self.n_cls = 22
+    def __init__(self, ds_type="linemod"):
+        if ds_type=="linemod" or "ycb":
+            n_cls = 22
+            self.n_cls = n_cls
+        elif ds_type=="tless":
+            n_cls = 31
+            self.n_cls = n_cls
+        else:
+            raise ValueError("Unknown dataset name: {}".format(ds_type))
         self.cls_add_dis = [list() for i in range(n_cls)]
         self.cls_adds_dis = [list() for i in range(n_cls)]
         self.cls_add_s_dis = [list() for i in range(n_cls)]
         self.sym_cls_ids = []
+
 
     def cal_auc(self):
         add_auc_lst = []
@@ -342,6 +429,52 @@ class TorchEval():
         )
         pkl.dump(sv_info, open(sv_pth, 'wb'))
 
+    def cal_tless_add(self, obj_id):
+        add_auc_lst = []
+        adds_auc_lst = []
+        add_s_auc_lst = []
+        cls_id = obj_id
+        if (obj_id) in config_tless.tless_sym_cls_ids:
+            self.cls_add_s_dis[cls_id] = self.cls_adds_dis[cls_id]
+        else:
+            self.cls_add_s_dis[cls_id] = self.cls_add_dis[cls_id]
+        self.cls_add_s_dis[0] += self.cls_add_s_dis[cls_id]
+        add_auc = bs_utils_tless.cal_auc(self.cls_add_dis[cls_id])
+        adds_auc = bs_utils_tless.cal_auc(self.cls_adds_dis[cls_id])
+        add_s_auc = bs_utils_tless.cal_auc(self.cls_add_s_dis[cls_id])
+        add_auc_lst.append(add_auc)
+        adds_auc_lst.append(adds_auc)
+        add_s_auc_lst.append(add_s_auc)
+        d = config_tless.tless_r_lst[obj_id]['diameter'] / 1000.0 * 0.1
+        print("obj_id: ", obj_id, "0.1 diameter: ", d)
+        add = np.mean(np.array(self.cls_add_dis[cls_id]) < d) * 100
+        adds = np.mean(np.array(self.cls_adds_dis[cls_id]) < d) * 100
+
+        cls_type = obj_id #config_tless.tless_id2obj_dict[obj_id]
+        print(obj_id, cls_type)
+        print("***************add auc:\t", add_auc)
+        print("***************adds auc:\t", adds_auc)
+        print("***************add(-s) auc:\t", add_s_auc)
+        print("***************add < 0.1 diameter:\t", add)
+        print("***************adds < 0.1 diameter:\t", adds)
+
+        sv_info = dict(
+            add_dis_lst = self.cls_add_dis,
+            adds_dis_lst = self.cls_adds_dis,
+            add_auc_lst = add_auc_lst,
+            adds_auc_lst = adds_auc_lst,
+            add_s_auc_lst = add_s_auc_lst,
+            add = add,
+            adds = adds,
+        )
+        sv_pth = os.path.join(
+            config_tless.log_eval_dir,
+            'pvn3d_eval_cuda_{}_{}_{}.pkl'.format(
+                cls_type, add, adds
+            )
+        )
+        pkl.dump(sv_info, open(sv_pth, 'wb'))
+
     def eval_pose_parallel(
         self, pclds, rgbs, masks, pred_ctr_ofs, gt_ctr_ofs, labels, cnt,
         cls_ids, RTs, pred_kp_ofs, min_cnt=20, merge_clus=False, bbox=False, ds='YCB',
@@ -364,19 +497,31 @@ class TorchEval():
                 cls_ids, use_ctr_lst, n_cls_lst, min_cnt_lst, use_ctr_clus_flter_lst,
                 labels, epoch_lst, bs_lst
             )
-        else:
+        elif ds_type == "linemod":
             data_gen = zip(
                 pclds, masks, pred_ctr_ofs, pred_kp_ofs, RTs,
                 cls_ids, use_ctr_lst, n_cls_lst, min_cnt_lst, use_ctr_clus_flter_lst,
                 labels, epoch_lst, bs_lst, obj_id_lst
             )
+        elif ds_type == "tless":
+            data_gen = zip(
+                pclds, masks, pred_ctr_ofs, pred_kp_ofs, RTs,
+                cls_ids, use_ctr_lst, n_cls_lst, min_cnt_lst, use_ctr_clus_flter_lst,
+                labels, epoch_lst, bs_lst, obj_id_lst
+            )
+        else:
+            raise ValueError("Unknown dataset name: {}".format(ds_type))
         with concurrent.futures.ThreadPoolExecutor(
             max_workers= bs
         ) as executor:
             if ds_type == "ycb":
                 eval_func = eval_one_frame_pose
-            else:
+            elif ds_type == "linemod":
                 eval_func = eval_one_frame_pose_lm
+            elif ds_type == "tless":
+                eval_func = eval_one_frame_pose_tless
+            else:
+                raise ValueError("Unknown dataset name: {}".format(ds_type))
             for res in executor.map(eval_func, data_gen):
                 cls_add_dis_lst, cls_adds_dis_lst = res
                 self.cls_add_dis = self.merge_lst(

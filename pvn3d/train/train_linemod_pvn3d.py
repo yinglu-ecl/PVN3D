@@ -5,6 +5,7 @@ from __future__ import (
     print_function,
     unicode_literals,
 )
+import open3d as o3d
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_sched
@@ -433,25 +434,25 @@ if __name__ == "__main__":
         train_ds = LM_Dataset('train', cls_type=args.cls)
         train_loader = torch.utils.data.DataLoader(
             train_ds, batch_size=config.mini_batch_size, shuffle=True,
-            num_workers=20, worker_init_fn=worker_init_fn
+            num_workers=1, worker_init_fn=worker_init_fn
         )
         val_ds = LM_Dataset('val', cls_type=args.cls)
         val_loader = torch.utils.data.DataLoader(
             val_ds, batch_size=config.val_mini_batch_size, shuffle=False,
-            num_workers=10
+            num_workers=1
         )
     else:
         if args.test_occ:
             test_ds = OCC_LM_Dataset('test', cls_type=args.cls)
             test_loader = torch.utils.data.DataLoader(
                 test_ds, batch_size=config.test_mini_batch_size, shuffle=False,
-                num_workers=10
+                num_workers=1 #0
             )
         else:
             test_ds = LM_Dataset('test', cls_type=args.cls)
             test_loader = torch.utils.data.DataLoader(
                 test_ds, batch_size=config.test_mini_batch_size, shuffle=False,
-                num_workers=10
+                num_workers=1 #0
             )
 
     model = PVN3D(

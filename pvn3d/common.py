@@ -28,15 +28,15 @@ class Config:
             os.path.join(self.exp_dir, 'train_log', dataset_name)
         )
         ensure_fd(self.log_dir)
-        self.log_model_dir = os.path.join(self.log_dir, 'checkpoints', self.cls_type)
+        self.log_model_dir = os.path.join(self.log_dir, 'checkpoints', '{}'.format(self.cls_type))
         ensure_fd(self.log_model_dir)
-        self.log_eval_dir = os.path.join(self.log_dir, 'eval_results', self.cls_type)
+        self.log_eval_dir = os.path.join(self.log_dir, 'eval_results', '{}'.format(self.cls_type))
         ensure_fd(self.log_eval_dir)
 
         self.n_total_epoch = 25
-        self.mini_batch_size = 24
+        self.mini_batch_size = 2#4
         self.num_mini_batch_per_epoch = 4000
-        self.val_mini_batch_size = 24
+        self.val_mini_batch_size = 2#4
         self.val_num_mini_batch_per_epoch = 125
         self.test_mini_batch_size = 1
 
@@ -84,9 +84,9 @@ class Config:
                 self.exp_dir,
                 'datasets/ycb/test_val_data_pts{}.pkl'.format(self.n_sample_points),
             )
-        else: # linemod
+        elif self.dataset_name == 'linemod': # linemod
             self.n_objects = 1 + 1
-            self.n_classes = 1 + 1
+            self.n_classes = 1 + 1 #this setting is never used in this project
             self.lm_cls_lst = [
                 1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15
             ]
@@ -134,6 +134,23 @@ class Config:
             self.lm_r_lst = yaml.load(lm_r_file)
 
             self.val_nid_ptn = "/data/6D_Pose_Data/datasets/LINEMOD/pose_nori_lists/{}_real_val.nori.list"
+
+        elif self.dataset_name == 'tless': # tless
+            self.n_objects = 1 + 1 ## why?
+            self.n_classes = 1 + 1
+            self.tless_cls_list = [i+1 for i in range(30)]
+            self.tless_sym_cls_ids = [i+1 for i in range(30)]
+            self.tless_root = os.path.abspath(
+                os.path.join(self.exp_dir, 'datasets/tless/')
+            )
+            self.tless_kps_dir = os.path.abspath(
+                os.path.join(self.exp_dir, 'datasets/tless/tless_obj_kps/')
+            )
+
+            tless_r_pth = os.path.join(self.tless_root, "models_cad/models_info.yml")
+            self.tless_r_lst = yaml.load(open(os.path.join(tless_r_pth), "r"))
+        else:
+            raise ValueError('unknown dataset name: {}'.format(self.dataset_name))
 
         self.intrinsic_matrix = {
             'linemod': np.array([[572.4114, 0.,         325.2611],

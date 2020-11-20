@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import os
 import cv2
-import pcl
+# import pcl
+import open3d as o3d
 import torch
 import os.path
 import numpy as np
@@ -149,17 +150,26 @@ class LM_Dataset():
 
         return np.clip(img, 0, 255).astype(np.uint8)
 
+    # def get_normal(self, cld):
+    #     cloud = pcl.PointCloud()
+    #     cld = cld.astype(np.float32)
+    #     cloud.from_array(cld)
+    #     ne = cloud.make_NormalEstimation()
+    #     kdtree = cloud.make_kdtree()
+    #     ne.set_SearchMethod(kdtree)
+    #     ne.set_KSearch(50)
+    #     n = ne.compute()
+    #     n = n.to_array()
+    #     return n
+
     def get_normal(self, cld):
-        cloud = pcl.PointCloud()
+        cloud = o3d.geometry.PointCloud()
         cld = cld.astype(np.float32)
-        cloud.from_array(cld)
-        ne = cloud.make_NormalEstimation()
-        kdtree = cloud.make_kdtree()
-        ne.set_SearchMethod(kdtree)
-        ne.set_KSearch(50)
-        n = ne.compute()
-        n = n.to_array()
+        cloud.points = o3d.utility.Vector3dVector(cld)
+        cloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=50)) ## suppose distance on mm
+        n = np.asarray(cloud.normals)
         return n
+
 
     def add_real_back(self, rgb, labels, dpt, dpt_msk):
         real_item = self.real_gen()
@@ -180,7 +190,7 @@ class LM_Dataset():
 
         msk_back = (labels <= 0).astype(rgb.dtype)
         msk_back = np.repeat(msk_back[:, :, None], 3, 2)
-        imshow("msk_back", msk_back)
+        # imshow("msk_back", msk_back)
         rgb = rgb * (msk_back==0).astype(rgb.dtype) + back * msk_back
 
         dpt = dpt * (dpt_msk > 0).astype(dpt.dtype) + \
@@ -385,11 +395,19 @@ def main():
             imshow('nrm_map', nrm_map)
             rgb = rgb.transpose(1, 2, 0) # [...,::-1].copy()
             for i in range(22):
-                p2ds = bs_utils.project_p3d(pcld, cam_scale, K)
-                # rgb = self.bs_utils.draw_p2ds(rgb, p2ds)
                 kp3d = kp3ds[i]
                 if kp3d.sum() < 1e-6:
                     break
+                ##
+                # p2ds = bs_utils.project_p3d(pcld, cam_scale, K)
+                # rgb = bs_utils.draw_p2ds(rgb, p2ds, color=(0,255,0))
+                mesh_pts = bs_utils.get_pointxyz(cls_ids[i,0], ds_type="linemod").copy()
+                gt_r = RTs[i][:,:3]
+                gt_t = RTs[i][:,3]
+                gt_mesh_pts = np.dot(mesh_pts, gt_r.T) + gt_t
+                gt_mesh_p3ds = bs_utils.project_p3d(gt_mesh_pts, 1.0, K)
+                rgb = bs_utils.draw_p2ds(rgb, gt_mesh_p3ds, color=(0,255,0))
+                ##
                 kp_2ds = bs_utils.project_p3d(kp3d, cam_scale, K)
                 rgb = bs_utils.draw_p2ds(
                     rgb, kp_2ds, 3, (0, 0, 255) # bs_utils.get_label_color(cls_ids[i], mode=1)

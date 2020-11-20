@@ -171,6 +171,10 @@ class Basic_Utils():
         self.lm_cls_ptsxyz_cuda_dict = {}
         self.lm_cls_kps_dict = {}
         self.lm_cls_ctr_dict = {}
+        self.tless_cls_ptsxyz_dict = {}
+        self.tless_cls_ptsxyz_cuda_dict = {}
+        self.tless_cls_kps_dict = {}
+        self.tless_cls_ctr_dict = {}
 
     def read_lines(self, p):
         with open(p, 'r') as f:
@@ -477,8 +481,12 @@ class Basic_Utils():
         if type(cls) is int:
             if ds_type == 'ycb':
                 cls = self.ycb_cls_lst[cls - 1]
-            else:
+            elif ds_type == 'linemod':
                 cls = self.lm_cls_lst[cls - 1]
+            elif ds_type == 'tless':
+                cls = self.tless_cls_lst[cls -1]
+            else:
+                raise ValueError("Unknown dataset name: {}".format(ds_type))
         return cls
 
     def ply_vtx(self, pth):
@@ -486,6 +494,19 @@ class Basic_Utils():
         assert f.readline().strip() == "ply"
         f.readline()
         f.readline()
+        N = int(f.readline().split()[-1])
+        while f.readline().strip() != "end_header":
+            continue
+        pts = []
+        for _ in range(N):
+            pts.append(np.float32(f.readline().split()[:3]))
+        return np.array(pts)
+
+    def ply_vtx_tless(self, pth):
+        f = open(pth)
+        assert f.readline().strip() == "ply"
+        f.readline()
+        # f.readline()
         N = int(f.readline().split()[-1])
         while f.readline().strip() != "end_header":
             continue
@@ -508,7 +529,7 @@ class Basic_Utils():
             pointxyz = np.loadtxt(ptxyz_ptn.format(cls), dtype=np.float32)
             self.ycb_cls_ptsxyz_dict[cls] = pointxyz
             return pointxyz
-        else:
+        elif ds_type == "linemod":
             ptxyz_pth = os.path.join(
                 'datasets/linemod/Linemod_preprocessed/models',
                 'obj_%02d.ply' % cls
@@ -519,6 +540,19 @@ class Basic_Utils():
             pointxyz = np.delete(pointxyz, dellist, axis=0)
             self.lm_cls_ptsxyz_dict[cls] = pointxyz
             return pointxyz
+        elif ds_type == "tless":
+            ptxyz_pth = os.path.join(
+                'datasets/tless/models_cad',
+                'obj_{:02d}.ply'.format(int(cls))
+            )
+            pointxyz = self.ply_vtx_tless(ptxyz_pth) / 1000.0
+            dellist = [j for j in range(0, len(pointxyz))]
+            dellist = random.sample(dellist, len(pointxyz) - 2000)
+            pointxyz = np.delete(pointxyz, dellist, axis=0)
+            self.tless_cls_ptsxyz_dict[cls] = pointxyz
+            return pointxyz
+        else:
+            raise ValueError("Unknown dataset: {}".format(ds_type))
 
     def get_pointxyz_cuda(
         self, cls, ds_type='ycb'
@@ -530,13 +564,22 @@ class Basic_Utils():
             ptsxyz_cu = torch.from_numpy(ptsxyz.astype(np.float32)).cuda()
             self.ycb_cls_ptsxyz_cuda_dict[cls] = ptsxyz_cu
             return ptsxyz_cu.clone()
-        else:
+        elif ds_type == 'linemod':
             if cls in self.lm_cls_ptsxyz_cuda_dict.keys():
                 return self.lm_cls_ptsxyz_cuda_dict[cls].clone()
             ptsxyz = self.get_pointxyz(cls, ds_type)
             ptsxyz_cu = torch.from_numpy(ptsxyz.astype(np.float32)).cuda()
             self.lm_cls_ptsxyz_cuda_dict[cls] = ptsxyz_cu
             return ptsxyz_cu.clone()
+        elif ds_type == "tless":
+            if cls in self.tless_cls_ptsxyz_cuda_dict.keys():
+                return self.tless_cls_ptsxyz_cuda_dict[cls].clone()
+            ptsxyz = self.get_pointxyz(cls, ds_type)
+            ptsxyz_cu = torch.from_numpy(ptsxyz.astype(np.float32)).cuda()
+            self.tless_cls_ptsxyz_cuda_dict[cls] = ptsxyz_cu
+            return ptsxyz_cu.clone()
+        else:
+            raise ValueError("Unknown dataset: {}".format(ds_type))
 
     def get_kps(
         self, cls, kp_type='farthest', ds_type='ycb'
@@ -544,7 +587,7 @@ class Basic_Utils():
         if type(cls) is int:
             if ds_type == 'ycb':
                 cls = self.ycb_cls_lst[cls - 1]
-            else:
+            elif ds_type == 'linemod':
                 cls = self.config.lm_id2obj_dict[cls]
         if ds_type == "ycb":
             if cls in self.ycb_cls_kps_dict.keys():
@@ -554,7 +597,7 @@ class Basic_Utils():
             )
             kps = np.loadtxt(kps_pattern.format(cls), dtype=np.float32)
             self.ycb_cls_kps_dict[cls] = kps
-        else:
+        elif ds_type == "linemod":
             if cls in self.lm_cls_kps_dict.keys():
                 return self.lm_cls_kps_dict[cls].copy()
             kps_pattern = os.path.join(
@@ -562,13 +605,22 @@ class Basic_Utils():
             )
             kps = np.loadtxt(kps_pattern.format(cls), dtype=np.float32)
             self.lm_cls_kps_dict[cls] = kps
+        elif ds_type == "tless":
+            if cls in self.tless_cls_kps_dict.keys():
+                return self.tless_cls_kps_dict[cls].copy()
+            kps_pattern = os.path.join(self.config.tless_kps_dir, "{:02d}/{:s}.txt")
+            kps = np.loadtxt(kps_pattern.format(cls, kp_type), dtype=np.float32)
+            kps = kps / 1000.0
+            self.tless_cls_kps_dict[cls] = kps
+        else:
+            raise ValueError("Unknown dataset type: {}".format(ds_type))
         return kps.copy()
 
     def get_ctr(self, cls, ds_type='ycb'):
         if type(cls) is int:
             if ds_type == 'ycb':
                 cls = self.ycb_cls_lst[cls - 1]
-            else:
+            elif ds_type == 'linemod':
                 cls = self.config.lm_id2obj_dict[cls]
         if ds_type == "ycb":
             if cls in self.ycb_cls_ctr_dict.keys():
@@ -579,7 +631,7 @@ class Basic_Utils():
             cors = np.loadtxt(cor_pattern.format(cls), dtype=np.float32)
             ctr = cors.mean(0)
             self.ycb_cls_ctr_dict[cls] = ctr
-        else:
+        elif ds_type == "linemod":
             if cls in self.lm_cls_ctr_dict.keys():
                 return self.lm_cls_ctr_dict[cls].copy()
             cor_pattern = os.path.join(
@@ -588,6 +640,16 @@ class Basic_Utils():
             cors = np.loadtxt(cor_pattern.format(cls), dtype=np.float32)
             ctr = cors.mean(0)
             self.lm_cls_ctr_dict[cls] = ctr
+        elif ds_type == "tless":
+            if cls in self.tless_cls_ctr_dict.keys():
+                return self.tless_cls_ctr_dict[cls].copy()
+            cor_pattern = os.path.join(self.config.tless_kps_dir, '{:02d}/corners.txt')
+            cors = np.loadtxt(cor_pattern.format(cls), dtype=np.float32)
+            cors = cors / 1000.0
+            ctr = cors.mean(0)
+            self.tless_cls_ctr_dict[cls] = ctr
+        else: 
+            raise ValueError("Unknown dataset type: {}".format(ds_type))
         return ctr.copy()
 
     def cal_auc(self, add_dis, max_dis=0.1):
@@ -604,8 +666,12 @@ class Basic_Utils():
     ):
         if ds_type == 'ycb':
             cls_nm = self.ycb_cls_lst[cls_id-1]
-        else:
+        elif ds_type == 'linemod':
             cls_nm = self.lm_cls_lst[cls_id-1]
+        elif ds_type == 'tless':
+            cls_nm = self.tless_cls_lst[cls_id-1]
+        else:
+            raise ValueError("Unknown dataset name: {}".format(ds_type))
         kp_on_mesh = self.get_kps(cls_nm, kp_type=kp_type)
         RT = best_fit_transform(kp_on_mesh, pred_kps)
         return RT
