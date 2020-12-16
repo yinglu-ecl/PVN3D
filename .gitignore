@@ -7,3 +7,9 @@
 build
 ****/knn
 *.DS_Store
+pvn3d/datasets/linemod/Linemod_preprocessed
+pvn3d/datasets/tless/models_cad
+pvn3d/datasets/tless/test_primesense
+pvn3d/datasets/tless/tless_obj_kps
+pvn3d/datasets/tless/train_primesense
+pvn3d/train_log
